@@ -11,6 +11,7 @@ from sklearn.metrics import roc_auc_score
 import tensorflow as tf
 import tensorflow.python.keras.backend as K
 import utils
+import uuid
 def split_dataset():
     df = pd.read_csv('/home/lucas_araujo/pibic-2024/dataset/Data_Entry_2017.csv')
     df = df.loc[:,['Image Index','Patient ID', 'Finding Labels']]
@@ -79,12 +80,9 @@ val_generator = datagen.flow_from_dataframe(
     class_mode= "raw",
     target_size=(224,224),
     batch_size=1,
-    shuffle=True,
+    shuffle=False,
 )
 
-datagen_test = ImageDataGenerator(
-    samplewise_std_normalization=True #TODO rever se essa normalização aqui está correta
-)
 
 test_generator = datagen.flow_from_dataframe(
     dataframe=df_test,
@@ -94,7 +92,7 @@ test_generator = datagen.flow_from_dataframe(
     class_mode= "raw",
     target_size=(224,224),
     batch_size=1,
-    shuffle=True,
+    shuffle=False,
 )
 
 
@@ -162,7 +160,7 @@ def get_weighted_loss(pos_weights, neg_weights, epsilon=1e-7):
     return weighted_loss
 
 
-def train():
+def create_model():
     base_model = tf.keras.applications.DenseNet121(weights='imagenet', include_top=False)
     x = base_model.output
     # add a global spatial average pooling layer
@@ -171,19 +169,20 @@ def train():
     predictions = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
 
     model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
+    return model
 
+def train():
+    model = create_model()
     # callbacks setup
     MODEL_PATH = "records"
-    CHECKPOINT_PATH = f"{MODEL_PATH}/checkpoint"
+    model_name = f"model_{uuid.uuid4()}"
+    CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
-    checkpoint = tf.keras.callbacks.ModelCheckpoint(
-        f"{CHECKPOINT_PATH}/{model.name}",
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(f"{CHECKPOINT_PATH}/weights_best.hdf5",
         monitor = 'val_loss',
-        save_best_only = True,
         save_weights_only = True,
-        save_freq='epoch',
-        mode='min',
+        mode='auto',
         verbose=1
     )
 
@@ -200,8 +199,9 @@ def train():
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
         mode='min',
-        min_delta=0.001,
-        patience=5
+        # min_delta=0.001,
+        patience=5,
+        restore_best_weights=True
     )
 
     model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
@@ -209,34 +209,44 @@ def train():
     H = model.fit(train_generator, 
         validation_data = val_generator,
         epochs = 1,
-        steps_per_epoch=100,
-        validation_steps=100,
         callbacks=[checkpoint,
                 #    lr_scheduler,
                 early_stopping]
         )
-
     utils.save_history(H.history, CHECKPOINT_PATH)
-    return model
 
 
-def test(model):
-    MODEL_PATH = "records"
-    model.load_weights(f"{MODEL_PATH}/checkpoint/{model.name}") # vai carregar novamente o melhor peso TODO confirmar se isso ta carregando algum peso
     predictions = model.predict(test_generator, verbose=1)
-
     auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
     for disease,auc in zip(labels,auc_scores):
      print(f'{disease}: {auc}')
-    var = {
+    results = {
         "groun_truth" : test_generator.labels,
         "predictions" : predictions,
         "auc_scores" : auc_scores,
         "labels" : labels
     }
-    utils.store_test_metrics(var, path=f"{MODEL_PATH}/checkpoint/") 
+    utils.store_test_metrics(results, path=CHECKPOINT_PATH) 
+
+
+
+# def test(model):
+#     MODEL_PATH = "records"
+#     model.load_weights(f"{MODEL_PATH}/checkpoint/{model.name}") # vai carregar novamente o melhor peso TODO confirmar se isso ta carregando algum peso
+#     predictions = model.predict(test_generator, verbose=1)
+
+#     auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
+#     for disease,auc in zip(labels,auc_scores):
+#      print(f'{disease}: {auc}')
+#     var = {
+#         "groun_truth" : test_generator.labels,
+#         "predictions" : predictions,
+#         "auc_scores" : auc_scores,
+#         "labels" : labels
+#     }
+#     utils.store_test_metrics(var, path=f"{MODEL_PATH}/checkpoint/") 
 
 if __name__ == "__main__":
      model = train()
-     score = test(model)
+    #  score = test(model)
 

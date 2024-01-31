@@ -1,3 +1,6 @@
 /__pycache__
-/records
+#/records
 nohup.out
+checkpoint_over
+checkpoint
+weights*

@@ -4,3 +4,4 @@ nohup.out
 checkpoint_over
 checkpoint
 weights*
+/segm_models

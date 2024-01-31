@@ -1,1 +1,2 @@
 # classificacao_multilabel_chest
+Treinamento de uma CNN + Unet que gera máscara do pulmão para respectivo corte e treinamento em uma instância inicializada do 0 da CNN para aprender as características somentedo pulmão, finalmente concatena as features das duas e treina tudo com um módulo SEBlock

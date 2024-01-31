@@ -179,27 +179,26 @@ def train():
     CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
-    checkpoint = tf.keras.callbacks.ModelCheckpoint(f"{CHECKPOINT_PATH}/weights_best.hdf5",
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(f"{CHECKPOINT_PATH}/weights.ckpt",
         monitor = 'val_loss',
         save_weights_only = True,
         mode='auto',
         verbose=1
     )
 
-    lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_loss",
-        mode='min',
-        factor      =   .1,
-        patience    =   5,
-        cooldown    =   5,
-        min_lr      =   0.000001,
-        min_delta   =   0.001
-    )
+    # lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
+    #     monitor="val_loss",
+    #     mode='min',
+    #     factor      =   .1,
+    #     patience    =   5,
+    #     cooldown    =   5,
+    #     min_lr      =   0.000001,
+    #     min_delta   =   0.001
+    # )
 
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
         mode='min',
-        # min_delta=0.001,
         patience=5,
         restore_best_weights=True
     )
@@ -208,7 +207,7 @@ def train():
 
     H = model.fit(train_generator, 
         validation_data = val_generator,
-        epochs = 1,
+        epochs = 15,
         callbacks=[checkpoint,
                 #    lr_scheduler,
                 early_stopping]
@@ -218,8 +217,10 @@ def train():
 
     predictions = model.predict(test_generator, verbose=1)
     auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
+    
     for disease,auc in zip(labels,auc_scores):
      print(f'{disease}: {auc}')
+    
     results = {
         "groun_truth" : test_generator.labels,
         "predictions" : predictions,

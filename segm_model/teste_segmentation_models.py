@@ -6,6 +6,9 @@ from segmentation_models import *
 from segmentation_models.metrics import iou_score
 import shutil
 import pickle
+import tensorflow as tf 
+from keras import backend as K
+
 
 def load_data(train, train_gt, test, test_gt):
     X_train = np.load(train, allow_pickle = True)
@@ -239,13 +242,15 @@ for (name, Model) in a.items():
                 validation_data = (xv, y_val),
             )
 
-            pred = model.predict(xtest)
-            with open('{}/{}/pred_{}.pickle'.format(main_models_folder, name, BACKBONE), 'wb') as f:
-                pickle.dump(pred, f)
+            #TODO fazer o predict dps
+            # pred = model.predict(xtest)
 
-            statistics = generate_log(y_test, pred, names, '{}/{}/logs/{}.csv'.format(main_models_folder, name, BACKBONE))
-            save_masks(pred, names, '{}/{}/masks/{}/'.format(main_models_folder, name, BACKBONE))
-            save_statistics('{}/resultados'.format(main_models_folder), name, BACKBONE, statistics)
+            # with open('{}/{}/pred_{}.pickle'.format(main_models_folder, name, BACKBONE), 'wb') as f:
+            #     pickle.dump(pred, f)
 
-            with open('evaluated.txt', 'a') as f:
-                f.write(name + '_' + BACKBONE + '\n')
+            # statistics = generate_log(y_test, pred, names, '{}/{}/logs/{}.csv'.format(main_models_folder, name, BACKBONE))
+            # save_masks(pred, names, '{}/{}/masks/{}/'.format(main_models_folder, name, BACKBONE))
+            # save_statistics('{}/resultados'.format(main_models_folder), name, BACKBONE, statistics)
+
+            # with open('evaluated.txt', 'a') as f:
+            #     f.write(name + '_' + BACKBONE + '\n')

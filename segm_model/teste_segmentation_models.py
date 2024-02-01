@@ -242,7 +242,8 @@ for (name, Model) in a.items():
                 validation_data = (xv, y_val),
             )
 
-            #TODO fazer o predict dps
+            #TODO FAZER PREDICT E AVALIAÇÃO SEPARADO ... 
+            
             # pred = model.predict(xtest)
 
             # with open('{}/{}/pred_{}.pickle'.format(main_models_folder, name, BACKBONE), 'wb') as f:

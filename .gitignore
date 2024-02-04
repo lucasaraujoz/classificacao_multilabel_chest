@@ -1,8 +1,9 @@
 /__pycache__
-#/records
+/records
 nohup.out
 checkpoint_over
 checkpoint
 weights*
 segm_models*
 mask_chest
+curva-rock.png

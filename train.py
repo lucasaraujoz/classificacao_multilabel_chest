@@ -1,4 +1,4 @@
-BATCH_SIZE=8
+BATCH_SIZE=16
 
 import pandas as pd
 import numpy as np
@@ -245,21 +245,21 @@ def train():
     model_global = tf.keras.models.Model(inputs=global_encoder.input, outputs=predictions_global)
     model_global.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
 
-    # H_G = model_global.fit(train_generator, 
-    #     validation_data = val_generator,
-    #     epochs = 1,
-    #     callbacks=[checkpoint,
-    #             early_stopping]
-    #     )
+    H_G = model_global.fit(train_generator, 
+        validation_data = val_generator,
+        epochs = 15,
+        callbacks=[checkpoint,
+                early_stopping]
+        )
    
     #classificador local
-    local_encoder = local_branch(img_shape)
-    x = local_encoder.output
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    predictions_local = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
-    model_local = tf.keras.models.Model(inputs=local_encoder.input, outputs=predictions_local)
+    # local_encoder = local_branch(img_shape)
+    # x = local_encoder.output
+    # x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    # predictions_local = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
+    # model_local = tf.keras.models.Model(inputs=local_encoder.input, outputs=predictions_local)
 
-    model_local.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+    # model_local.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
 
     # H_L = model_local.fit(train_generator, 
     #     validation_data = val_generator,
@@ -271,37 +271,37 @@ def train():
 
     # classificador fusão
 
-    f_model = model_fusion(local_encoder, global_encoder)
-    f_model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
-    H_F = f_model.fit(train_generator, 
-    validation_data = val_generator,
-    epochs = 1,
-    callbacks=[checkpoint,
-            early_stopping]
-    )
+    # f_model = model_fusion(local_encoder, global_encoder)
+    # f_model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+    # H_F = f_model.fit(train_generator, 
+    # validation_data = val_generator,
+    # epochs = 1,
+    # callbacks=[checkpoint,
+    #         early_stopping]
+    # )
 
 
 
 
-    # utils.save_history(H.history, CHECKPOINT_PATH)
+    utils.save_history(H_G.history, CHECKPOINT_PATH)
 
 
-    # predictions = model.predict(test_generator, verbose=1)
-    # auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
-    # auc_score_macro = roc_auc_score(test_generator.labels, predictions, average='macro')
-    # auc_scores_micro = roc_auc_score(test_generator.labels, predictions, average='micro')
-    # auc_scores_weighted = roc_auc_score(test_generator.labels, predictions, average='weighted')
+    predictions = model_global.predict(test_generator, verbose=1)
+    auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
+    auc_score_macro = roc_auc_score(test_generator.labels, predictions, average='macro')
+    auc_score_micro = roc_auc_score(test_generator.labels, predictions, average='micro')
+    auc_score_weighted = roc_auc_score(test_generator.labels, predictions, average='weighted')
     
-    # results = {
-    #     "groun_truth" : test_generator.labels,
-    #     "predictions" : predictions,
-    #     "auc_scores" : auc_scores,
-    #     "labels" : labels,
-    #     "auc_macro" : auc_score_macro,
-    #     "auc_micro" : auc_score_micro,
-    #     "auc_weighted" : auc_scores_weighted,
-    # }
-    # utils.store_test_metrics(results, path=CHECKPOINT_PATH) 
+    results = {
+        "groun_truth" : test_generator.labels,
+        "predictions" : predictions,
+        "auc_scores" : auc_scores,
+        "labels" : labels,
+        "auc_macro" : auc_score_macro,
+        "auc_micro" : auc_score_micro,
+        "auc_weighted" : auc_score_weighted,
+    }
+    utils.store_test_metrics(results, path=CHECKPOINT_PATH) 
 
 if __name__ == "__main__":
      model = train()

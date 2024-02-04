@@ -245,13 +245,14 @@ def train():
 
     H_G = model_global.fit(train_generator_global, 
         validation_data = val_generator_global,
-        epochs = 1,
+        epochs = 15,
         callbacks=[
             # checkpoint,
             early_stopping
             ],
         )
-   
+    model_global.save_weights("/home/lucas/dataset_chest/classificacao_multilabel_chest/weights/denseNet121_global.h5")
+    
     # #classificador local
     local_encoder = local_branch(img_shape)
     x = local_encoder.output
@@ -263,13 +264,14 @@ def train():
 
     H_L = model_local.fit(train_generator_local, 
         validation_data = val_generator_local,
-        epochs = 1,
+        epochs = 15,
         callbacks=[
                 # checkpoint,
                 early_stopping],
         )
     
-
+    model_local.save_weights("/home/lucas/dataset_chest/classificacao_multilabel_chest/weights/denseNet121_local.h5")
+    
     # classificador fusão
     train_generator_global_2 = get_generator(df = df_train, x_col="path", shuffle=False) # recriando os generator com shuffe=False pra manter consistência do batch
     train_generator_local_2 = get_generator(df = df_train, x_col="path_crop", shuffle=False)

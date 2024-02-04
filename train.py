@@ -9,16 +9,22 @@ from glob import glob
 from sklearn.model_selection import GroupShuffleSplit
 from sklearn.metrics import roc_auc_score
 import tensorflow as tf
-import tensorflow.python.keras.backend as K
+# import tensorflow.python.keras.backend as K
 import utils
 import uuid
+from keras.layers import Dense, Flatten, Dropout, BatchNormalization, Input, Concatenate
+from tensorflow.keras.layers import GlobalAveragePooling2D, Reshape, Dense, Permute, multiply
+import tensorflow.keras.backend as K
+from keras import layers
+
+
 def split_dataset():
-    df = pd.read_csv('/home/lucas_araujo/pibic-2024/dataset/Data_Entry_2017.csv')
-    df = df.loc[:,['Image Index','Patient ID', 'Finding Labels']]
-    img_paths={os.path.basename(x): x for x in glob(os.path.join('.', '/home/lucas_araujo/pibic-2024/dataset', 'images*','images','*.png'))} 
-    df['path']=df['Image Index'].map(img_paths.get) #mapping image ids to all image paths
-    labels = df['Finding Labels'].str.get_dummies('|')
-    df = pd.concat([df, labels], axis=1)
+    df = pd.read_csv('/home/lucas/dataset_chest/df_ori_mask_crop.csv')
+    # df = df.loc[:,['Image Index','Patient ID', 'Finding Labels']]
+    # img_paths={os.path.basename(x): x for x in glob(os.path.join('.', '/home/lucas_araujo/pibic-2024/dataset', 'images*','images','*.png'))} 
+    # df['path']=df['Image Index'].map(img_paths.get) #mapping image ids to all image paths
+    # labels = df['Finding Labels'].str.get_dummies('|')
+    # df = pd.concat([df, labels], axis=1)
     #split train/test 80/20
     split = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     groups = df['Patient ID'].values
@@ -159,42 +165,68 @@ def get_weighted_loss(pos_weights, neg_weights, epsilon=1e-7):
 
     return weighted_loss
 
+def global_branch(input_shape):
+  densenet121 = tf.keras.applications.DenseNet121(input_shape= input_shape, include_top= False, weights="imagenet")
+  densenet121._name= 'densenet121_global_branch'
+  return densenet121
 
-def create_model():
-    base_model = tf.keras.applications.DenseNet121(weights='imagenet', include_top=False)
-    x = base_model.output
-    # add a global spatial average pooling layer
-    x = tf.keras.layers.GlobalAveragePooling2D()(x)
-    # and a logistic layer
-    predictions = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
+def local_branch(input_shape):
+    densenet121 = tf.keras.applications.DenseNet121(input_shape= input_shape, include_top= False, weights="imagenet")
+    densenet121._name= 'densenet121_local_branch'
+    return densenet121
 
-    model = tf.keras.models.Model(inputs=base_model.input, outputs=predictions)
-    return model
+
+def squeeze_excite_block(tensor, ratio=16):
+    init = tensor
+    channel_axis = 1 if K.image_data_format() == "channels_first" else -1
+    filters = init.shape[channel_axis]
+    se_shape = (1, 1, filters)
+
+    se = GlobalAveragePooling2D()(init)
+    se = Reshape(se_shape)(se)
+    se = Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(se)
+    se = Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
+
+    if K.image_data_format() == 'channels_first':
+        se = Permute((3, 1, 2))(se)
+
+    x = multiply([init, se])
+    return x
+
+
+def model_fusion(local_encoder, global_encoder):
+  for layer in local_encoder.layers:
+      layer._name = layer.name + str("_2")
+
+  local_features = local_encoder.output
+  global_features = global_encoder.output
+  concatenated_volume = Concatenate(axis=-1)([local_features, global_features])
+
+  se_block_out = squeeze_excite_block(concatenated_volume)
+  # Clasification fusion
+  x_F = layers.Flatten()(se_block_out)
+  classification_fusion =  layers.Dense(15, activation="sigmoid")(x_F)
+
+  fusion_model = tf.keras.models.Model(
+      inputs=[local_encoder.input, global_encoder.input], outputs= [classification_fusion]
+  )
+
+  return fusion_model
 
 def train():
-    model = create_model()
     # callbacks setup
     MODEL_PATH = "records"
-    model_name = f"model_{uuid.uuid4()}"
+    model_name = f"{uuid.uuid4()}"
     CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
-
+    
     checkpoint = tf.keras.callbacks.ModelCheckpoint(f"{CHECKPOINT_PATH}/weights.ckpt",
         monitor = 'val_loss',
         save_weights_only = True,
+        save_best_only=True,
         mode='auto',
         verbose=1
     )
-
-    # lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
-    #     monitor="val_loss",
-    #     mode='min',
-    #     factor      =   .1,
-    #     patience    =   5,
-    #     cooldown    =   5,
-    #     min_lr      =   0.000001,
-    #     min_delta   =   0.001
-    # )
 
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
@@ -203,51 +235,73 @@ def train():
         restore_best_weights=True
     )
 
-    model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
 
-    H = model.fit(train_generator, 
-        validation_data = val_generator,
-        epochs = 15,
-        callbacks=[checkpoint,
-                #    lr_scheduler,
-                early_stopping]
-        )
-    utils.save_history(H.history, CHECKPOINT_PATH)
+    img_shape= (224,224,3)
+    #classificador global
+    global_encoder = global_branch(img_shape)
+    x = global_encoder.output
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    predictions_global = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
+    model_global = tf.keras.models.Model(inputs=global_encoder.input, outputs=predictions_global)
+    model_global.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
 
+    # H_G = model_global.fit(train_generator, 
+    #     validation_data = val_generator,
+    #     epochs = 1,
+    #     callbacks=[checkpoint,
+    #             early_stopping]
+    #     )
+   
+    #classificador local
+    local_encoder = local_branch(img_shape)
+    x = local_encoder.output
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    predictions_local = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
+    model_local = tf.keras.models.Model(inputs=local_encoder.input, outputs=predictions_local)
 
-    predictions = model.predict(test_generator, verbose=1)
-    auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
+    model_local.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+
+    # H_L = model_local.fit(train_generator, 
+    #     validation_data = val_generator,
+    #     epochs = 1,
+    #     callbacks=[checkpoint,
+    #             early_stopping]
+    #     )
     
-    for disease,auc in zip(labels,auc_scores):
-     print(f'{disease}: {auc}')
+
+    # classificador fusão
+
+    f_model = model_fusion(local_encoder, global_encoder)
+    f_model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+    H_F = f_model.fit(train_generator, 
+    validation_data = val_generator,
+    epochs = 1,
+    callbacks=[checkpoint,
+            early_stopping]
+    )
+
+
+
+
+    # utils.save_history(H.history, CHECKPOINT_PATH)
+
+
+    # predictions = model.predict(test_generator, verbose=1)
+    # auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
+    # auc_score_macro = roc_auc_score(test_generator.labels, predictions, average='macro')
+    # auc_scores_micro = roc_auc_score(test_generator.labels, predictions, average='micro')
+    # auc_scores_weighted = roc_auc_score(test_generator.labels, predictions, average='weighted')
     
-    results = {
-        "groun_truth" : test_generator.labels,
-        "predictions" : predictions,
-        "auc_scores" : auc_scores,
-        "labels" : labels
-    }
-    utils.store_test_metrics(results, path=CHECKPOINT_PATH) 
-
-
-
-# def test(model):
-#     MODEL_PATH = "records"
-#     model.load_weights(f"{MODEL_PATH}/checkpoint/{model.name}") # vai carregar novamente o melhor peso TODO confirmar se isso ta carregando algum peso
-#     predictions = model.predict(test_generator, verbose=1)
-
-#     auc_scores = roc_auc_score(test_generator.labels, predictions, average=None)
-#     for disease,auc in zip(labels,auc_scores):
-#      print(f'{disease}: {auc}')
-#     var = {
-#         "groun_truth" : test_generator.labels,
-#         "predictions" : predictions,
-#         "auc_scores" : auc_scores,
-#         "labels" : labels
-#     }
-#     utils.store_test_metrics(var, path=f"{MODEL_PATH}/checkpoint/") 
+    # results = {
+    #     "groun_truth" : test_generator.labels,
+    #     "predictions" : predictions,
+    #     "auc_scores" : auc_scores,
+    #     "labels" : labels,
+    #     "auc_macro" : auc_score_macro,
+    #     "auc_micro" : auc_score_micro,
+    #     "auc_weighted" : auc_scores_weighted,
+    # }
+    # utils.store_test_metrics(results, path=CHECKPOINT_PATH) 
 
 if __name__ == "__main__":
      model = train()
-    #  score = test(model)
-

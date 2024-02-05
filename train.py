@@ -17,6 +17,8 @@ from tensorflow.keras.layers import GlobalAveragePooling2D, Reshape, Dense, Perm
 import tensorflow.keras.backend as K
 from keras import layers
 from math import ceil
+
+
 print("Número de GPUs disponíveis: ", len(
 tf.config.list_physical_devices('GPU')))
 gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -30,7 +32,7 @@ if gpus:
 
 
 def split_dataset():
-    df = pd.read_csv('/home/lucas/dataset_chest/df_ori_mask_crop.csv')
+    df = pd.read_csv('df_ori_mask_crop.csv')
     split = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     groups = df['Patient ID'].values
 
@@ -193,8 +195,11 @@ def squeeze_excite_block(tensor, ratio=16):
     return x
 
 def model_fusion(local_encoder, global_encoder):
+  for layer in global_encoder.layers:
+      layer._name = layer.name + str("_global")
+
   for layer in local_encoder.layers:
-      layer._name = layer.name + str("_2")
+      layer._name = layer.name + str("_local")
 
   local_features = local_encoder.output
   global_features = global_encoder.output
@@ -229,7 +234,7 @@ def train():
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
         mode='min',
-        patience=8,
+        patience=5,
         restore_best_weights=True
     )
 
@@ -241,36 +246,43 @@ def train():
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     predictions_global = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
     model_global = tf.keras.models.Model(inputs=global_encoder.input, outputs=predictions_global)
-    model_global.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+    # model_global.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
 
-    H_G = model_global.fit(train_generator_global, 
-        validation_data = val_generator_global,
-        epochs = 15,
-        callbacks=[
-            # checkpoint,
-            early_stopping
-            ],
-        )
-    model_global.save_weights("/home/lucas/dataset_chest/classificacao_multilabel_chest/weights/denseNet121_global.h5")
+    # carregar pesos
+    model_global.load_weights("weights/denseNet121_global.h5")
+    # H_G = model_global.fit(train_generator_global, 
+    #     # validation_data = val_generator_global,
+    #     epochs = 15,
+    #     callbacks=[
+    #         # checkpoint,
+    #         early_stopping
+    #         ],
+    #     )
+
+
+    #salvar pesos 
+    # model_global.save_weights("/home/lucas/dataset_chest/classificacao_multilabel_chest/weights/denseNet121_global.h5")
     
-    # #classificador local
+    #classificador local
     local_encoder = local_branch(img_shape)
     x = local_encoder.output
     x = tf.keras.layers.GlobalAveragePooling2D()(x)
     predictions_local = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
     model_local = tf.keras.models.Model(inputs=local_encoder.input, outputs=predictions_local)
 
-    model_local.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+    # model_local.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+  
+    model_local.load_weights("weights/denseNet121_local.h5")
 
-    H_L = model_local.fit(train_generator_local, 
-        validation_data = val_generator_local,
-        epochs = 15,
-        callbacks=[
-                # checkpoint,
-                early_stopping],
-        )
-    
-    model_local.save_weights("/home/lucas/dataset_chest/classificacao_multilabel_chest/weights/denseNet121_local.h5")
+    # H_L = model_local.fit(train_generator_local, 
+    #     validation_data = val_generator_local,
+    #     epochs = 15,
+    #     callbacks=[
+    #             # checkpoint,
+    #             early_stopping],
+    #     )
+    #salvar pesos 
+    # model_local.save_weights("/home/lucas/dataset_chest/classificacao_multilabel_chest/weights/denseNet121_local.h5")
     
     # classificador fusão
     train_generator_global_2 = get_generator(df = df_train, x_col="path", shuffle=False) # recriando os generator com shuffe=False pra manter consistência do batch
@@ -284,9 +296,18 @@ def train():
     f_model = model_fusion(local_encoder, global_encoder)
     f_model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
     
+    #congelar backbones
+        #global
+    for x in f_model.layers:
+        if(x.name.endswith("_global")):
+         x.trainable = False
+    for x in f_model.layers:
+        if(x.name.endswith("_local")):
+         x.trainable = False
+                
     H_F = f_model.fit(train_two, 
         validation_data = val_two,
-        epochs = 1,
+        epochs = 10,
         steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
         validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
         callbacks=[

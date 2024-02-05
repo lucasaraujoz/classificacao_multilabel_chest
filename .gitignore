@@ -1,5 +1,9 @@
 /__pycache__
 /records
+/dataset
+./dataset
+/mask_chest_crop
+./CXR8
 nohup.out
 checkpoint_over
 checkpoint

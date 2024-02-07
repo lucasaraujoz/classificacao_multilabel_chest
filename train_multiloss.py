@@ -244,7 +244,7 @@ def train():
         restore_best_weights=True
     )
 
-    input_shape = (150,150,3)
+    input_shape = (224,224,3)
     g_model = global_branch(input_shape)
     l_model = local_branch(input_shape)
     f_model = model_fusion(input_shape, l_model, g_model)
@@ -258,9 +258,9 @@ def train():
     test_two = generator_two_img(test_generator_global, test_generator_local)
     
     losses = {
-        "sigmoid_local": "binary_crossentropy",
-        "sigmoid_global": "binary_crossentropy",
-        "sigmoid_fusion": "binary_crossentropy",
+        "sigmoid_local": get_weighted_loss(pos_weights, neg_weights),
+        "sigmoid_global": get_weighted_loss(pos_weights, neg_weights),
+        "sigmoid_fusion": get_weighted_loss(pos_weights, neg_weights),
     
     }
     lossWeights = {"sigmoid_local": 0.25, "sigmoid_global": 0.25, "sigmoid_fusion":1.0}
@@ -268,18 +268,13 @@ def train():
     f_model.compile(optimizer='adam', loss=losses, loss_weights=lossWeights,
         metrics=[tf.keras.metrics.AUC(multi_label=True)])
     
-
-    # f_model = model_fusion(local_encoder, global_encoder)
-    # f_model.compile(optimizer='adam', loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
-    
-    #congelar backbones
-        #local
+    #congela local
     for x in f_model.layers[3].layers:
         x.trainable = False
-                
+    #global descongelada
     H_G = f_model.fit(train_two, 
         validation_data = val_two,
-        epochs = 10,
+        epochs = 1,
         steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
         validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
         callbacks=[
@@ -287,7 +282,8 @@ def train():
             early_stopping]
     )
 
-    utils.save_history(H_F.history, CHECKPOINT_PATH, branch="global")
+    utils.save_history(H_G.history, CHECKPOINT_PATH, branch="global")
+    
     #descongela local
     for x in f_model.layers[3].layers:
         x.trainable = True
@@ -297,7 +293,7 @@ def train():
 
     H_L = f_model.fit(train_two, 
         validation_data = val_two,
-        epochs = 10,
+        epochs = 1,
         steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
         validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
         callbacks=[
@@ -305,7 +301,7 @@ def train():
             early_stopping]
     )
 
-    utils.save_history(H_F.history, CHECKPOINT_PATH, branch="local")
+    utils.save_history(H_L.history, CHECKPOINT_PATH, branch="local")
 
     #descongela tudo:
     for x in f_model.layers[3].layers:
@@ -314,9 +310,9 @@ def train():
     for x in f_model.layers[2].layers:
         x.trainable = True
 
-    H_F= f_model.fit(train_two, 
+    H_F = f_model.fit(train_two, 
         validation_data = val_two,
-        epochs = 10,
+        epochs = 1,
         steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
         validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
         callbacks=[
@@ -326,22 +322,18 @@ def train():
 
     utils.save_history(H_F.history, CHECKPOINT_PATH, branch="all")
 
-    predictions = f_model.predict(test_two, verbose=1, steps= ceil(len(test_generator_global.labels)/BATCH_SIZE)) ## usando o generator como tamanho de steps
-    auc_scores = roc_auc_score(test_generator_global.labels, predictions, average=None)
-    auc_score_macro = roc_auc_score(test_generator_global.labels, predictions, average='macro')
-    auc_score_micro = roc_auc_score(test_generator_global.labels, predictions, average='micro')
-    auc_score_weighted = roc_auc_score(test_generator_global.labels, predictions, average='weighted')
-    
-    results = {
-        "groun_truth" : test_generator_global.labels,
-        "predictions" : predictions,
-        "auc_scores" : auc_scores,
-        "labels" : labels,
-        "auc_macro" : auc_score_macro,
-        "auc_micro" : auc_score_micro,
-        "auc_weighted" : auc_score_weighted,
-    }
-    utils.store_test_metrics(results, path=CHECKPOINT_PATH, filename=f"test_metrics_auc_{auc_score_macro}")
+    print("Predictions: ")
+    predictions_global, predictions_local, predictions_fusion = f_model.predict(test_two,
+                                                                                 verbose=1, 
+                                                                                 steps= ceil(len(test_generator_global.labels)/BATCH_SIZE))
+
+    results_global = utils.evaluate_classification_model(test_generator_global.labels, predictions_global, labels)
+    results_local = utils.evaluate_classification_model(test_generator_global.labels, predictions_local, labels)
+    results_fusion = utils.evaluate_classification_model(test_generator_global.labels, predictions_fusion, labels)
+
+    utils.store_test_metrics(results_global, path=CHECKPOINT_PATH, filename=f"metrics_global")
+    utils.store_test_metrics(results_local, path=CHECKPOINT_PATH, filename=f"metrics_local")
+    utils.store_test_metrics(results_fusion, path=CHECKPOINT_PATH, filename="metrics_fusion", name= model_name, json=True)
 
 if __name__ == "__main__":
      model = train()

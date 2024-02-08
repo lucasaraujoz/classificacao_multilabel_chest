@@ -1,5 +1,5 @@
 #VARS
-BATCH_SIZE=16
+BATCH_SIZE=8
 
 import pandas as pd
 import numpy as np
@@ -16,6 +16,7 @@ from keras.layers import Dense, Flatten, Dropout, BatchNormalization, Input, Con
 from tensorflow.keras.layers import GlobalAveragePooling2D, Reshape, Dense, Permute, multiply
 import tensorflow.keras.backend as K
 from keras import layers
+from keras import optimizers
 from math import ceil
 
 labels = [
@@ -170,62 +171,16 @@ def get_weighted_loss(pos_weights, neg_weights, epsilon=1e-7):
     return weighted_loss
 
 def global_branch(input_shape):
-  densenet121 = tf.keras.applications.DenseNet121(input_shape= input_shape, include_top= False)
+  densenet121 = tf.keras.applications.DenseNet121(input_shape= input_shape, include_top= False, weights="imagenet")
   densenet121._name= 'densenet121_global_branch'
   return densenet121
 
 def local_branch(input_shape):
-  densenet121 = tf.keras.applications.DenseNet121(input_shape= input_shape, include_top= False)
+  densenet121 = tf.keras.applications.DenseNet121(input_shape= input_shape, include_top= False, weights="imagenet")
   densenet121._name= 'densenet121_local_branch'
   return densenet121
 
-def squeeze_excite_block(tensor, ratio=16):
-    init = tensor
-    channel_axis = 1 if K.image_data_format() == "channels_first" else -1
-    filters = init.shape[channel_axis]
-    se_shape = (1, 1, filters)
-
-    se = GlobalAveragePooling2D()(init)
-    se = Reshape(se_shape)(se)
-    se = Dense(filters // ratio, activation='relu', kernel_initializer='he_normal', use_bias=False)(se)
-    se = Dense(filters, activation='sigmoid', kernel_initializer='he_normal', use_bias=False)(se)
-
-    if K.image_data_format() == 'channels_first':
-        se = Permute((3, 1, 2))(se)
-
-    x = multiply([init, se])
-    return x
-
-def model_fusion(input_shape, local_encoder, global_encoder):
-  local_input = Input(name='local', shape= input_shape)
-  globals_input = Input(name='global', shape= input_shape)
-
-  local_features = local_encoder(local_input)
-  global_features = global_encoder(globals_input)
-  print(global_features)
-  
-  concatenated_volume = Concatenate(axis=-1)([local_features, global_features])
-  se_block_out = squeeze_excite_block(concatenated_volume)
-
-  # Classificador Global
-  x_G = GlobalAveragePooling2D()(global_features)
-  classification_global = Dense(len(labels), activation="sigmoid", name='sigmoid_global')(x_G)
-
-  # Classificador Local
-  x_L = GlobalAveragePooling2D()(local_features)
-  classification_local = Dense(len(labels), activation="sigmoid", name="sigmoid_local")(x_L)
-
-  # Clasification fusion
-  x_F = GlobalAveragePooling2D()(se_block_out)
-  classification_fusion = Dense(len(labels), activation="sigmoid", name="sigmoid_fusion")(x_F)
-
-  fusion_model = tf.keras.models.Model(
-      inputs=[globals_input, local_input], outputs= [classification_global, classification_local, classification_fusion]
-  )
-
-  return fusion_model
-
-def train():
+def train_global():
     # callbacks setup
     MODEL_PATH = "records"
     model_name = f"{uuid.uuid4()}"
@@ -243,101 +198,128 @@ def train():
     early_stopping = tf.keras.callbacks.EarlyStopping(
         monitor='val_loss',
         mode='min',
-        patience=5,
+        patience=7,
         restore_best_weights=True
+    )
+
+    lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss",
+        mode='min',
+        factor      =   .1,
+        patience    =   5,
+        cooldown    =   5,
+        min_lr      =   0.000001,
+        min_delta   =   0.001
     )
 
     input_shape = (224,224,3)
     g_model = global_branch(input_shape)
-    l_model = local_branch(input_shape)
-    f_model = model_fusion(input_shape, l_model, g_model)
-    
-    # classificador fusão
-    train_generator_global_2 = get_generator(df = df_train, x_col="path", shuffle=False) # recriando os generator com shuffe=False pra manter consistência do batch
-    train_generator_local_2 = get_generator(df = df_train, x_col="path_crop", shuffle=False)
-    
-    train_two = generator_two_img(train_generator_global_2, train_generator_local_2)
-    val_two = generator_two_img(val_generator_global, val_generator_local)
-    test_two = generator_two_img(test_generator_global, test_generator_local)
-    
-    losses = {
-        "sigmoid_local": get_weighted_loss(pos_weights, neg_weights),
-        "sigmoid_global": get_weighted_loss(pos_weights, neg_weights),
-        "sigmoid_fusion": get_weighted_loss(pos_weights, neg_weights),
-    
-    }
-    lossWeights = {"sigmoid_local": 0.25, "sigmoid_global": 0.25, "sigmoid_fusion":1.0}
-    print("[INFO] compiling model...")
-    f_model.compile(optimizer='adam', loss=losses, loss_weights=lossWeights,
-        metrics=[tf.keras.metrics.AUC(multi_label=True)])
-    
-    #congela local
-    for x in f_model.layers[3].layers:
-        x.trainable = False
-    #global descongelada
-    
-    H_G = f_model.fit(train_two, 
-        validation_data = val_two,
-        epochs = 5,
-        steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
-        validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
-        callbacks=[
-            # checkpoint,
-            early_stopping]
-    )
+    #____global model____
+    x = g_model.output
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    predictions_global = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
+    model_global = tf.keras.models.Model(inputs=g_model.input, outputs=predictions_global)
+    model_global.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=1e-3, momentum=9e-1),
+                          loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
 
-    utils.save_history(H_G.history, CHECKPOINT_PATH, branch="global")
-    
-    #descongela local
-    for x in f_model.layers[3].layers:
-        x.trainable = True
-    #congela global
-    for x in f_model.layers[2].layers:
-        x.trainable = False
-
-    H_L = f_model.fit(train_two, 
-        validation_data = val_two,
-        epochs = 5,
-        steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
-        validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
-        callbacks=[
-            # checkpoint,
-            early_stopping]
-    )
-
-    utils.save_history(H_L.history, CHECKPOINT_PATH, branch="local")
-
-    #descongela tudo:
-    for x in f_model.layers[3].layers:
-        x.trainable = True
-    #congela global
-    for x in f_model.layers[2].layers:
-        x.trainable = True
-
-    H_F = f_model.fit(train_two, 
-        validation_data = val_two,
-        epochs = 10,
-        steps_per_epoch =  ceil(len(train_generator_global_2.labels)/BATCH_SIZE),
-        validation_steps = ceil(len(val_generator_global.labels)/BATCH_SIZE),
+    # Shallow Fine Tunning
+    for layer in model_global.layers:
+        layer.trainable=False
+        if "conv5_block16" in layer.name:
+            layer.trainable = True
+        if "conv5_block15" in layer.name:
+            layer.trainable = True
+        if "conv5_block14" in layer.name:
+            layer.trainable = True
+        if "bn" in layer.name:
+            layer.trainable=True
+            
+    H_G = model_global.fit(train_generator_global, 
+        validation_data = val_generator_global,
+        epochs = 15,
         callbacks=[
             checkpoint,
-            early_stopping]
+            lr_scheduler,
+            early_stopping
+            ],
+        )
+    
+    utils.save_history(H_G.history, CHECKPOINT_PATH, branch="global")
+    print("Predictions: ")
+    predictions_global = model_global.predict(test_generator_global, verbose=1)
+    results_global = utils.evaluate_classification_model(test_generator_global.labels, predictions_global, labels)
+    utils.store_test_metrics(results_global, path=CHECKPOINT_PATH, filename=f"metrics_global", name=model_name, json=True)
+
+def train_local():
+    # callbacks setup
+    MODEL_PATH = "records"
+    model_name = f"{uuid.uuid4()}"
+    CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
+    os.makedirs(CHECKPOINT_PATH, exist_ok=True)
+    print(f"Modelo - {model_name}")
+    checkpoint = tf.keras.callbacks.ModelCheckpoint(f"{CHECKPOINT_PATH}/weights.ckpt",
+        monitor = 'val_loss',
+        save_weights_only = True,
+        save_best_only=True,
+        mode='auto',
+        verbose=1
     )
 
-    utils.save_history(H_F.history, CHECKPOINT_PATH, branch="all")
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        monitor='val_loss',
+        mode='min',
+        patience=7,
+        restore_best_weights=True
+    )
 
+    lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_loss",
+        mode='min',
+        factor      =   .1,
+        patience    =   5,
+        cooldown    =   5,
+        min_lr      =   0.000001,
+        min_delta   =   0.001
+    )
+
+    #_____LOCAL_____
+    input_shape = (224,224,3)
+    l_model = local_branch(input_shape)
+    x = l_model.output
+    x = tf.keras.layers.GlobalAveragePooling2D()(x)
+    predictions_local = tf.keras.layers.Dense(len(labels), activation="sigmoid")(x)
+    model_local = tf.keras.models.Model(inputs=l_model.input, outputs=predictions_local)
+    model_local.compile(optimizer=tf.keras.optimizers.SGD(learning_rate=1e-3, momentum=9e-1),
+                          loss=get_weighted_loss(pos_weights, neg_weights),  metrics=[tf.keras.metrics.AUC(multi_label=True)])
+
+    # Shallow Fine Tunning
+    for layer in model_local.layers:
+        layer.trainable=False
+        if "conv5_block16" in layer.name:
+            layer.trainable = True
+        if "conv5_block15" in layer.name:
+            layer.trainable = True
+        if "conv5_block14" in layer.name:
+            layer.trainable = True
+        if "bn" in layer.name:
+            layer.trainable=True
+            
+    H_l = model_local.fit(train_generator_local, 
+        validation_data = val_generator_local,
+        epochs = 15,
+        callbacks=[
+            checkpoint,
+            lr_scheduler,
+            early_stopping
+            ],
+        )
+    
+    utils.save_history(H_l.history, CHECKPOINT_PATH, branch="local")
     print("Predictions: ")
-    predictions_global, predictions_local, predictions_fusion = f_model.predict(test_two,
-                                                                                 verbose=1, 
-                                                                                 steps= ceil(len(test_generator_global.labels)/BATCH_SIZE))
-
-    results_global = utils.evaluate_classification_model(test_generator_global.labels, predictions_global, labels)
-    results_local = utils.evaluate_classification_model(test_generator_global.labels, predictions_local, labels)
-    results_fusion = utils.evaluate_classification_model(test_generator_global.labels, predictions_fusion, labels)
-
-    utils.store_test_metrics(results_global, path=CHECKPOINT_PATH, filename=f"metrics_global")
-    utils.store_test_metrics(results_local, path=CHECKPOINT_PATH, filename=f"metrics_local")
-    utils.store_test_metrics(results_fusion, path=CHECKPOINT_PATH, filename="metrics_fusion", name= model_name, json=True)
-
+    predictions_local = model_local.predict(test_generator_local, verbose=1)
+    results_local = utils.evaluate_classification_model(test_generator_local.labels, predictions_local, labels)
+    utils.store_test_metrics(results_local, path=CHECKPOINT_PATH, filename=f"metrics_local", name=model_name, json=True)
+    
 if __name__ == "__main__":
-     model = train()
+     train_global()
+     train_local()

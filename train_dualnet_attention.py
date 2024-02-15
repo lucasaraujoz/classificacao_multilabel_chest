@@ -1,25 +1,25 @@
-# VARS
-BATCH_SIZE = 64
+#*VARS
+BATCH_SIZE = 16
 # TODO colocar variaveis: loss, optimizador, lr, batch,
-# IMPORTS
-import pandas as pd
-import numpy as np
-import os
-import matplotlib.pyplot as plt
-from keras.preprocessing.image import ImageDataGenerator
-from glob import glob
-from sklearn.model_selection import GroupShuffleSplit
-from sklearn.metrics import roc_auc_score
-import tensorflow as tf
-import utils
-import uuid
-import data
-from keras.layers import Dense, Flatten, Dropout, BatchNormalization, Input, Concatenate
-from tensorflow.keras.layers import GlobalAveragePooling2D, Reshape, Dense, Permute, multiply
-import tensorflow.keras.backend as K
-from keras import layers
-from keras import optimizers
 from math import ceil
+from keras import optimizers
+from keras import layers
+import tensorflow.keras.backend as K
+from tensorflow.keras.layers import GlobalAveragePooling2D, Reshape, Dense, Permute, multiply
+from keras.layers import Dense, Flatten, Dropout, BatchNormalization, Input, Concatenate
+import data
+import uuid
+import utils
+import tensorflow as tf
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import GroupShuffleSplit
+from glob import glob
+from keras.preprocessing.image import ImageDataGenerator
+import matplotlib.pyplot as plt
+import os
+import numpy as np
+import pandas as pd
+# IMPORTS
 
 
 # TF CONFIGURATION
@@ -46,6 +46,7 @@ val_generator_global = data.get_generator(
 test_generator_global = data.get_generator(
     df=df_test, x_col="path", shuffle=False)
 
+
 def squeeze_excite_block(tensor, ratio=16):
     init = tensor
     channel_axis = 1 if K.image_data_format() == "channels_first" else -1
@@ -66,27 +67,35 @@ def squeeze_excite_block(tensor, ratio=16):
     return x
 
 # BUILD MODEL
-def global_branch(input_shape):
-    densenet121 = tf.keras.applications.DenseNet121(
-        input_shape=input_shape, include_top=False, weights="imagenet")
-    densenet121._name = 'densenet121_global_branch'
-    return densenet121
-
 def create_model_global():
-    input_shape = (224, 224, 3)
-    g_model = global_branch(input_shape)
-    # ____global model____
-    x = g_model.output
-    se_block_out = squeeze_excite_block(x)
-    x = tf.keras.layers.GlobalAveragePooling2D()(se_block_out) #se_block_out
+    img_input = Input(shape=(224, 224, 3))
+
+    # Extrair features do ResNet101
+    resnet = tf.keras.applications.ResNet101(
+        include_top=False, weights='imagenet', input_tensor=img_input)
+    resnet_out = resnet.output
+
+    # Extrair features do DenseNet121
+    densenet = tf.keras.applications.DenseNet121(
+        include_top=False, weights='imagenet', input_tensor=img_input)
+    
+    for layer in densenet.layers:
+      layer._name = layer._name + str("_2")
+    
+    densenet_out = densenet.output
+
+    concat = Concatenate()([resnet_out, densenet_out])
+    se_block_out = squeeze_excite_block(concat)
+    x = tf.keras.layers.GlobalAveragePooling2D()(se_block_out)  # se_block_out
     # #MLP
     # x = tf.keras.layers.Dense(128, activation='relu', name="mlp_01")(x)
     # x = tf.keras.layers.Dropout(0.2)(x)
     predictions_global = tf.keras.layers.Dense(
         len(data.LABELS), activation="sigmoid")(x)
     model_global = tf.keras.models.Model(
-        inputs=g_model.input, outputs=predictions_global)
+        inputs=img_input, outputs=predictions_global)
     return model_global
+
 
 # callbacks setup
 early_stopping = tf.keras.callbacks.EarlyStopping(
@@ -105,6 +114,8 @@ lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
     min_delta=0.001
 )
 # TRIAL RUN
+
+
 def train_global():
     # callbacks setup
     MODEL_PATH = "records"
@@ -124,7 +135,7 @@ def train_global():
     #     if "mlp" in layer.name:
     #         layer.trainable = True
 
-    #* Shallow Fine Tunning
+    # * Shallow Fine Tunning
     # for layer in model_global.layers:
     #     layer.trainable=False
     #     if "conv5_block16" in layer.name:
@@ -146,7 +157,7 @@ def train_global():
     #                        ],
     #                        )
 
-    #* deep fine tuning
+    # * deep fine tuning
     for layer in model_global.layers:
         layer.trainable = True
 
@@ -160,10 +171,12 @@ def train_global():
                            ],
                            )
 
+    #SALVAR HISTÓRICO
     utils.save_history(H_G.history, CHECKPOINT_PATH, branch="global")
     print("Predictions: ")
     predictions_global = model_global.predict(test_generator_global, verbose=1)
 
+    #AVALIAR MODELO
     results_global = utils.evaluate_classification_model(
         test_generator_global.labels, predictions_global, data.LABELS)
 
@@ -178,13 +191,10 @@ def train_global():
 
     utils.store_test_metrics(results_global, path=CHECKPOINT_PATH,
                              filename=f"metrics_global", name=model_name, json=True)
-    if results_global['auc_macro'] > 0.75:
+    if results_global['auc_macro'] > 0.80:
         model_global.save(filepath=filepath)
     # else:
-    #     shutil.rmtree(CHECKPOINT_PAT
-
-    # salvar modelo// restore best weights...
-
+    #     shutil.rmtree(CHECKPOINT_PATH)
 
 if __name__ == "__main__":
     train_global()

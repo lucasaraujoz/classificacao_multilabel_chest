@@ -44,10 +44,13 @@ def split_dataset():
     return df_train_atualizado, df_test, df_val
 
 #DATALOADER FUNCTION
-def get_generator(df, x_col, batch_size=16, shuffle=False, size=(224,224)):
-    datagen = ImageDataGenerator(
-        samplewise_center=True,
-        samplewise_std_normalization= True)
+def get_generator(df, x_col, batch_size=16, shuffle=False, size=(224,224), imageDataGenerator=None):
+    datagen = imageDataGenerator
+    if imageDataGenerator==None:
+        datagen = ImageDataGenerator(
+            horizontal_flip = True,
+            samplewise_center=True,
+            samplewise_std_normalization= True)
 
     generator = datagen.flow_from_dataframe(
         dataframe=df,

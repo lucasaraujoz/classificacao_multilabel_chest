@@ -1,6 +1,7 @@
-#*VARS
-BATCH_SIZE = 16
+# *VARS
 # TODO colocar variaveis: loss, optimizador, lr, batch,
+
+
 from math import ceil
 from keras import optimizers
 from keras import layers
@@ -19,8 +20,7 @@ import matplotlib.pyplot as plt
 import os
 import numpy as np
 import pandas as pd
-# IMPORTS
-
+from config import *
 
 # TF CONFIGURATION
 print("Número de GPUs disponíveis: ", len(
@@ -67,29 +67,28 @@ def squeeze_excite_block(tensor, ratio=16):
     return x
 
 # BUILD MODEL
-def create_model_global():
-    img_input = Input(shape=(224, 224, 3))
 
+
+def create_model_global():
+    img_input = Input(shape=(256, 256, 3))
+    crop = tf.keras.layers.RandomCrop(width=224, height=224)(img_input)
     # Extrair features do ResNet101
     resnet = tf.keras.applications.ResNet101(
-        include_top=False, weights='imagenet', input_tensor=img_input)
+        include_top=False, weights=None, input_tensor=crop)
     resnet_out = resnet.output
 
     # Extrair features do DenseNet121
     densenet = tf.keras.applications.DenseNet121(
-        include_top=False, weights='imagenet', input_tensor=img_input)
-    
+        include_top=False, weights=None, input_tensor=crop)
+
     for layer in densenet.layers:
-      layer._name = layer._name + str("_2")
-    
+        layer._name = layer._name + str("_2")
+
     densenet_out = densenet.output
 
     concat = Concatenate()([resnet_out, densenet_out])
     se_block_out = squeeze_excite_block(concat)
-    x = tf.keras.layers.GlobalAveragePooling2D()(se_block_out)  # se_block_out
-    # #MLP
-    # x = tf.keras.layers.Dense(128, activation='relu', name="mlp_01")(x)
-    # x = tf.keras.layers.Dropout(0.2)(x)
+    x = tf.keras.layers.GlobalAveragePooling2D()(se_block_out)
     predictions_global = tf.keras.layers.Dense(
         len(data.LABELS), activation="sigmoid")(x)
     model_global = tf.keras.models.Model(
@@ -101,7 +100,7 @@ def create_model_global():
 early_stopping = tf.keras.callbacks.EarlyStopping(
     monitor='val_loss',
     mode='min',
-    patience=7,
+    patience=13,
     restore_best_weights=True
 )
 
@@ -109,7 +108,7 @@ lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
     monitor="val_loss",
     mode='min',
     factor=.1,
-    patience=5,
+    patience=9,
     min_lr=0.000001,
     min_delta=0.001
 )
@@ -125,45 +124,18 @@ def train_global():
     print(f"Modelo - {model_name}")
 
     model_global = create_model_global()
-    model_global.compile(optimizer=tf.keras.optimizers.Adam(),
+    model_global.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=1e-3),
                          loss=tf.keras.losses.BinaryFocalCrossentropy(
                              apply_class_balancing=True),
-                         metrics=[tf.keras.metrics.AUC(multi_label=True)])
-    # #* warm up?
+                         metrics=[tf.keras.metrics.AUC(multi_label=True, curve='ROC')])
+
+    # # * deep fine tuning
     # for layer in model_global.layers:
-    #     layer.trainable = False
-    #     if "mlp" in layer.name:
-    #         layer.trainable = True
-
-    # * Shallow Fine Tunning
-    # for layer in model_global.layers:
-    #     layer.trainable=False
-    #     if "conv5_block16" in layer.name:
-    #         layer.trainable = True
-    #     if "conv5_block15" in layer.name:
-    #         layer.trainable = True
-    #     if "conv5_block14" in layer.name:
-    #         layer.trainable = True
-    #     if "bn" in layer.name:
-    #         layer.trainable=True
-
-    # H_G = model_global.fit(train_generator_global,
-    #                        validation_data=val_generator_global,
-    #                        epochs=5,
-    #                        callbacks=[
-    #                            # checkpoint,
-    #                            lr_scheduler,
-    #                            early_stopping
-    #                        ],
-    #                        )
-
-    # * deep fine tuning
-    for layer in model_global.layers:
-        layer.trainable = True
+    #     layer.trainable = True
 
     H_G = model_global.fit(train_generator_global,
                            validation_data=val_generator_global,
-                           epochs=20,
+                           epochs=30,
                            callbacks=[
                                # checkpoint,
                                lr_scheduler,
@@ -171,12 +143,12 @@ def train_global():
                            ],
                            )
 
-    #SALVAR HISTÓRICO
+    # SALVAR HISTÓRICO
     utils.save_history(H_G.history, CHECKPOINT_PATH, branch="global")
     print("Predictions: ")
     predictions_global = model_global.predict(test_generator_global, verbose=1)
 
-    #AVALIAR MODELO
+    # AVALIAR MODELO
     results_global = utils.evaluate_classification_model(
         test_generator_global.labels, predictions_global, data.LABELS)
 
@@ -195,6 +167,7 @@ def train_global():
         model_global.save(filepath=filepath)
     # else:
     #     shutil.rmtree(CHECKPOINT_PATH)
+
 
 if __name__ == "__main__":
     train_global()

@@ -36,7 +36,11 @@ if gpus:
 
 
 # LOAD DATASET AND SPLIT
-df_train, df_test, df_val = data.split_dataset()
+# df_train, df_test, df_val = data.split_dataset()
+df_train = pd.read_csv("df_train.csv")
+df_val = pd.read_csv("df_val.csv")
+df_test = pd.read_csv("df_test.csv")
+
 
 # generators global
 train_generator_global = data.get_generator(
@@ -74,12 +78,12 @@ def create_model_global():
     crop = tf.keras.layers.RandomCrop(width=224, height=224)(img_input)
     # Extrair features do ResNet101
     resnet = tf.keras.applications.ResNet101(
-        include_top=False, weights=None, input_tensor=crop)
+        include_top=False, weights="imagenet", input_tensor=crop)
     resnet_out = resnet.output
 
     # Extrair features do DenseNet121
     densenet = tf.keras.applications.DenseNet121(
-        include_top=False, weights=None, input_tensor=crop)
+        include_top=False, weights="imagenet", input_tensor=crop)
 
     for layer in densenet.layers:
         layer._name = layer._name + str("_2")
@@ -135,7 +139,7 @@ def train_global():
 
     H_G = model_global.fit(train_generator_global,
                            validation_data=val_generator_global,
-                           epochs=30,
+                           epochs=15,
                            callbacks=[
                                # checkpoint,
                                lr_scheduler,

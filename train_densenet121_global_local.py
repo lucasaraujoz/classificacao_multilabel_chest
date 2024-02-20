@@ -1,5 +1,3 @@
-# VARS
-BATCH_SIZE = 64
 # TODO colocar variaveis: loss, optimizador, lr, batch,
 # IMPORTS
 import pandas as pd
@@ -20,7 +18,7 @@ import tensorflow.keras.backend as K
 from keras import layers
 from keras import optimizers
 from math import ceil
-
+import config
 
 # TF CONFIGURATION
 print("Número de GPUs disponíveis: ", len(
@@ -36,11 +34,14 @@ if gpus:
 
 
 # LOAD DATASET AND SPLIT
-df_train, df_test, df_val = data.split_dataset()
+# df_train, df_test, df_val = data.split_dataset()
+df_train = pd.read_csv("df_train.csv")
+df_val = pd.read_csv("df_val.csv")
+df_test = pd.read_csv("df_test.csv")
 
 # generators global
 train_generator_global = data.get_generator(
-    df=df_train, x_col="path", shuffle=True, batch_size=BATCH_SIZE)
+    df=df_train, x_col="path", shuffle=True, batch_size=config.BATCH_SIZE)
 val_generator_global = data.get_generator(
     df=df_val, x_col="path", shuffle=False)
 test_generator_global = data.get_generator(
@@ -65,27 +66,18 @@ def squeeze_excite_block(tensor, ratio=16):
     x = multiply([init, se])
     return x
 
-# BUILD MODEL
-def global_branch(input_shape):
-    densenet121 = tf.keras.applications.DenseNet121(
-        input_shape=input_shape, include_top=False, weights="imagenet")
-    densenet121._name = 'densenet121_global_branch'
-    return densenet121
-
 def create_model_global():
-    input_shape = (224, 224, 3)
-    g_model = global_branch(input_shape)
-    # ____global model____
-    x = g_model.output
+    img_input = Input(shape=(256, 256, 3))
+    # crop = tf.keras.layers.RandomCrop(width=224, height=224)(img_input)
+    backbone = tf.keras.applications.EfficientNetV2S(
+        include_top=False, weights="imagenet", input_tensor=img_input)
+    x =  backbone.output
     se_block_out = squeeze_excite_block(x)
     x = tf.keras.layers.GlobalAveragePooling2D()(se_block_out) #se_block_out
-    # #MLP
-    # x = tf.keras.layers.Dense(128, activation='relu', name="mlp_01")(x)
-    # x = tf.keras.layers.Dropout(0.2)(x)
     predictions_global = tf.keras.layers.Dense(
         len(data.LABELS), activation="sigmoid")(x)
     model_global = tf.keras.models.Model(
-        inputs=g_model.input, outputs=predictions_global)
+        inputs=img_input, outputs=predictions_global)
     return model_global
 
 # callbacks setup
@@ -152,7 +144,7 @@ def train_global():
 
     H_G = model_global.fit(train_generator_global,
                            validation_data=val_generator_global,
-                           epochs=20,
+                           epochs=config.EPOCHS,
                            callbacks=[
                                # checkpoint,
                                lr_scheduler,
@@ -178,7 +170,7 @@ def train_global():
 
     utils.store_test_metrics(results_global, path=CHECKPOINT_PATH,
                              filename=f"metrics_global", name=model_name, json=True)
-    if results_global['auc_macro'] > 0.75:
+    if results_global['auc_macro'] > 0.79:
         model_global.save(filepath=filepath)
     # else:
     #     shutil.rmtree(CHECKPOINT_PAT

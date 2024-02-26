@@ -49,10 +49,8 @@ def get_generator(df, x_col, batch_size=16, shuffle=False, size=(256,256), image
     if imageDataGenerator==None:
         datagen = ImageDataGenerator(
             horizontal_flip = True,
-            # rescale=1/255.0,
             samplewise_center=True,
             samplewise_std_normalization= True,
-
             )
 
     generator = datagen.flow_from_dataframe(

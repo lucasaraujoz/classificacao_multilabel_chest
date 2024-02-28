@@ -53,7 +53,7 @@ def train_global():
     CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
-    model_global = classification_model_v6(depth=10)
+    model_global = classification_model_v6()
     
     model_global.compile(optimizer=tf.keras.optimizers.Adam(learning_rate = config.LR),
                          loss=tf.keras.losses.BinaryFocalCrossentropy(
@@ -62,7 +62,7 @@ def train_global():
     print(f"Modelo - {model_name}, lr = {config.LR}, batch = {config.BATCH_SIZE}")
     H_G = model_global.fit(train_generator_global,
                            validation_data=val_generator_global,
-                           epochs=100,
+                           epochs=20,
                            callbacks=[
                                early_stopping,
                                lr_scheduler

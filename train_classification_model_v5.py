@@ -12,7 +12,7 @@ gpus = tf.config.experimental.list_physical_devices('GPU')
 print(gpus)
 if gpus:
     try:
-        tf.config.experimental.set_visible_devices(gpus[1], 'GPU')
+        tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
         tf.config.experimental.set_memory_growth(gpus[0], True)
     except RuntimeError as e:
         print(e)
@@ -54,12 +54,20 @@ def train_global():
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
     model_global = classification_model_v5()
-    
-    model_global.compile(optimizer=tf.keras.optimizers.Adam(learning_rate = config.LR),
+    optimizer = 'adamax'
+    opt=None
+    if optimizer== 'sgd':
+        opt = tf.keras.optimizers.SGD(learning_rate = config.LR)
+    elif optimizer == "adam":
+        opt = tf.keras.optimizers.Adam(learning_rate = config.LR)
+    elif optimizer == "adamax":
+        opt = tf.keras.optimizers.Adamax(learning_rate = config.LR)
+
+    model_global.compile(optimizer=opt,
                          loss=tf.keras.losses.BinaryFocalCrossentropy(
                              apply_class_balancing=True),metrics=[tf.keras.metrics.AUC(multi_label=True, curve='ROC')])
     
-    print(f"Modelo - {model_name}, lr = {config.LR}, batch = {config.BATCH_SIZE}")
+    print(f"Modelo - {model_name}, lr = {config.LR}, batch = {config.BATCH_SIZE}, opt={optimizer}")
     H_G = model_global.fit(train_generator_global,
                            validation_data=val_generator_global,
                            epochs=config.EPOCHS,

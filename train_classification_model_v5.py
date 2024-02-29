@@ -85,19 +85,11 @@ def train_global():
     results_global = utils.evaluate_classification_model(
         test_generator_global.labels, predictions_fusion, data.LABELS)
 
-    prefix = model_name[:8]
     auc_macro_formatted = "{:.3f}".format(results_global['auc_macro'])
-
-    filename = f"{prefix}_{auc_macro_formatted}.hdf5"
-
-    filepath = os.path.join(CHECKPOINT_PATH, "checkpoint", filename)
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
     utils.store_test_metrics(results_global, path=CHECKPOINT_PATH,
                              filename=f"metrics_fusion", name=model_name, json=True)
     if results_global['auc_macro'] > 0.790:
-        model_global.save(filepath=filepath)
+        model_global.save(f"{CHECKPOINT_PATH}/model_{auc_macro_formatted}")
         #salvar csv
         df_train.to_csv(f"{CHECKPOINT_PATH}/df_train.csv")
         df_val.to_csv(f"{CHECKPOINT_PATH}/df_val.csv")

@@ -24,9 +24,9 @@ df_train, df_test, df_val = data.split_dataset()
 
 datagen = tf.keras.preprocessing.image.ImageDataGenerator(
         horizontal_flip = True,
-        rescale=1/255.
-        # samplewise_center=True,
-        # samplewise_std_normalization= True,
+        # rescale=1/255.
+        samplewise_center=True,
+        samplewise_std_normalization= True,
         )
 # GENERATORS GLOBAL
 train_generator_global = data.get_generator(imageDataGenerator=datagen,

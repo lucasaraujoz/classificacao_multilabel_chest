@@ -5,7 +5,7 @@ import uuid
 import utils
 import tensorflow as tf
 import data
-from models.classification_model_v6 import *
+from models.classification_model_v7 import *
 # TF CONFIGURATION
 print("Número de GPUs disponíveis: ", len(
     tf.config.list_physical_devices('GPU')))
@@ -22,8 +22,14 @@ if gpus:
 # LOAD DATASET AND SPLIT
 df_train, df_test, df_val = data.split_dataset()
 
+datagen = tf.keras.preprocessing.image.ImageDataGenerator(
+        horizontal_flip = True,
+        rescale=1/255.
+        # samplewise_center=True,
+        # samplewise_std_normalization= True,
+        )
 # GENERATORS GLOBAL
-train_generator_global = data.get_generator(
+train_generator_global = data.get_generator(imageDataGenerator=datagen,
     df=df_train, x_col="path", shuffle=True, batch_size=config.BATCH_SIZE)
 val_generator_global = data.get_generator(
     df=df_val, x_col="path", shuffle=False)
@@ -49,21 +55,29 @@ lr_scheduler = tf.keras.callbacks.ReduceLROnPlateau(
 
 def train_global():
     MODEL_PATH = "records"
-    VERSION = "v6"
+    VERSION = "v7"
     model_name = "model_{}_{}".format(VERSION,str(uuid.uuid4())[:8])
     CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
     os.makedirs(CHECKPOINT_PATH, exist_ok=True)
 
-    model_global = classification_model_v6()
-    
-    model_global.compile(optimizer=tf.keras.optimizers.Adam(learning_rate = config.LR),
+    model_global = classification_model_v7()
+    optimizer = 'adamax'
+    opt=None
+    if optimizer== 'sgd':
+        opt = tf.keras.optimizers.SGD(learning_rate = config.LR)
+    elif optimizer == "adam":
+        opt = tf.keras.optimizers.Adam(learning_rate = config.LR)
+    elif optimizer == "adamax":
+        opt = tf.keras.optimizers.Adamax(learning_rate = config.LR)
+
+    model_global.compile(optimizer=opt,
                          loss=tf.keras.losses.BinaryFocalCrossentropy(
                              apply_class_balancing=True),metrics=[tf.keras.metrics.AUC(multi_label=True, curve='ROC')])
     
-    print(f"Modelo - {model_name}, lr = {config.LR}, batch = {config.BATCH_SIZE}")
+    print(f"Modelo - {model_name}, lr = {config.LR}, batch = {config.BATCH_SIZE}, opt={optimizer}")
     H_G = model_global.fit(train_generator_global,
                            validation_data=val_generator_global,
-                           epochs=20,
+                           epochs=config.EPOCHS,
                            callbacks=[
                                early_stopping,
                                lr_scheduler
@@ -78,19 +92,11 @@ def train_global():
     results_global = utils.evaluate_classification_model(
         test_generator_global.labels, predictions_fusion, data.LABELS)
 
-    prefix = model_name[:8]
     auc_macro_formatted = "{:.3f}".format(results_global['auc_macro'])
-
-    filename = f"{prefix}_{auc_macro_formatted}.hdf5"
-
-    filepath = os.path.join(CHECKPOINT_PATH, "checkpoint", filename)
-    if os.path.exists(filepath):
-        os.remove(filepath)
-
     utils.store_test_metrics(results_global, path=CHECKPOINT_PATH,
                              filename=f"metrics_fusion", name=model_name, json=True)
     if results_global['auc_macro'] > 0.790:
-        model_global.save(filepath=filepath)
+        model_global.save(f"{CHECKPOINT_PATH}/model_{auc_macro_formatted}")
         #salvar csv
         df_train.to_csv(f"{CHECKPOINT_PATH}/df_train.csv")
         df_val.to_csv(f"{CHECKPOINT_PATH}/df_val.csv")

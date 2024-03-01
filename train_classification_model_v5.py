@@ -1,4 +1,5 @@
 import config
+import config_gpu
 import os
 import uuid
 import utils
@@ -12,8 +13,8 @@ gpus = tf.config.experimental.list_physical_devices('GPU')
 print(gpus)
 if gpus:
     try:
-        tf.config.experimental.set_visible_devices(gpus[0], 'GPU')
-        tf.config.experimental.set_memory_growth(gpus[0], True)
+        tf.config.experimental.set_visible_devices(gpus[config_gpu.INDEX_GPU], 'GPU')
+        tf.config.experimental.set_memory_growth(gpus[config_gpu.INDEX_GPU], True)
     except RuntimeError as e:
         print(e)
 

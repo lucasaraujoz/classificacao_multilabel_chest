@@ -23,9 +23,10 @@ LABELS = [
     "Pneumonia",
     "Pneumothorax"]
 
-def split_dataset():
-    df = pd.read_csv('df_ori_mask_crop.csv')
-    df = df.drop(df.loc[df['Finding Labels'] == 'No Finding'].index) # Removendo No Finding
+df = pd.read_csv('df_ori_mask_crop.csv')
+df = df.drop(df.loc[df['Finding Labels'] == 'No Finding'].index) # Removendo No Finding
+
+def split_dataset(df=df):
     split = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=42)
     groups = df['Patient ID'].values
 
@@ -44,7 +45,7 @@ def split_dataset():
     return df_train_atualizado, df_test, df_val
 
 #DATALOADER FUNCTION
-def get_generator(df, x_col, batch_size=16, shuffle=False, size=(256,256), imageDataGenerator=None):
+def get_generator(df, x_col, batch_size=16, shuffle=False, size=(256,256), imageDataGenerator=None, names=LABELS):
     datagen = imageDataGenerator
     if imageDataGenerator==None:
         datagen = ImageDataGenerator(
@@ -57,7 +58,7 @@ def get_generator(df, x_col, batch_size=16, shuffle=False, size=(256,256), image
         dataframe=df,
         directory = None,
         x_col=x_col,
-        y_col= LABELS,
+        y_col= names,
         class_mode= "raw",
         target_size=size,
         batch_size=batch_size,

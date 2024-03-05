@@ -42,6 +42,7 @@ def split_dataset(df=df):
 
     df_train_atualizado = df_train.iloc[train_idxs]
     df_val = df_train.iloc[val_idxs]
+    print(f"train_ids={len(train_idxs)}\nval_ids={len(val_idxs)}\ntest_ids={len(test_idxs)}")
     return df_train_atualizado, df_test, df_val
 
 #DATALOADER FUNCTION

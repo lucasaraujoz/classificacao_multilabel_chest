@@ -6,7 +6,6 @@ import utils
 import tensorflow as tf
 import data
 import pandas as pd
-from models.classification_model_v8 import *
 # TF CONFIGURATION
 print("Número de GPUs disponíveis: ", len(
     tf.config.list_physical_devices('GPU')))
@@ -27,14 +26,16 @@ LABELS = [
     "Pneumonia",
     "Pneumothorax"]
 
-df_train = pd.read_csv("df_train.csv")
-df_val = pd.read_csv("df_val.csv")
-df_test = pd.read_csv("df_test.csv")
+er = '|'.join(LABELS)
+df = pd.read_csv("df_ori_mask_crop.csv")
+df = df[df['Finding Labels'].str.contains(er)]
 
+df_train, df_test,df_val = data.split_dataset(df)
 datagen_val_test = tf.keras.preprocessing.image.ImageDataGenerator(
     samplewise_center=True,
     samplewise_std_normalization= True,
 )
+
 
 # GENERATORS GLOBAL
 train_generator_global = data.get_generator(
@@ -95,10 +96,10 @@ def train():
     predictions_fusion = model.predict(test_generator_global, verbose=1)
     # AVALIAR MODELO
     results_global = utils.evaluate_classification_model(
-        test_generator_global.labels, predictions_fusion, data.LABELS)
+        test_generator_global.labels, predictions_fusion, LABELS)
 
     auc_macro_formatted = "{:.3f}".format(results_global['auc_macro'])
-    if results_global['auc_macro'] > 0.790:
+    if results_global['auc_macro'] > 0.70:
         os.makedirs(CHECKPOINT_PATH, exist_ok=True)
         model.save(f"{CHECKPOINT_PATH}/model_{auc_macro_formatted}")
         # SALVAR HISTÓRICO

@@ -21,16 +21,20 @@ if gpus:
 
 
 LABELS = [
-    "Infiltration",
     "Pleural_Thickening",
     "Pneumonia",
     "Pneumothorax"]
 
 er = '|'.join(LABELS)
-df = pd.read_csv("df_ori_mask_crop.csv")
-df = df[df['Finding Labels'].str.contains(er)]
+# df = pd.read_csv("df_ori_mask_crop.csv")
 
-df_train, df_test,df_val = data.split_dataset(df)
+df_train = pd.read_csv("df_train.csv")
+df_train = df_train[df_train['Finding Labels'].str.contains(er)]
+df_val = pd.read_csv("df_val.csv")
+df_val = df_val[df_val['Finding Labels'].str.contains(er)]
+df_test = pd.read_csv("df_test.csv")
+df_test = df_test[df_test['Finding Labels'].str.contains(er)]
+
 datagen_val_test = tf.keras.preprocessing.image.ImageDataGenerator(
     samplewise_center=True,
     samplewise_std_normalization= True,
@@ -74,13 +78,13 @@ def train():
     model_name = "model_{}_{}".format(VERSION,str(uuid.uuid4())[:8])
     CHECKPOINT_PATH = f"{MODEL_PATH}/{model_name}"
 
-    model = densenet_pneumonia(n_classes=4)
+    model = densenet_pneumonia(n_classes=3)
     print("instanciou modelo")
     opt = tf.keras.optimizers.Adamax(learning_rate = config.LR)
 
     model.compile(optimizer=opt,
                          loss=tf.keras.losses.BinaryFocalCrossentropy(
-                             apply_class_balancing=True),metrics=[tf.keras.metrics.AUC(multi_label=True, curve='ROC')])
+                             apply_class_balancing=True, gamma=4, alpha=0.3),metrics=[tf.keras.metrics.AUC(multi_label=True, curve='ROC')])
     
     print(f"Modelo - {model_name}, lr = {config.LR}, batch = {config.BATCH_SIZE}, opt={opt}")
     H = model.fit(train_generator_global,

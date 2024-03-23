@@ -43,3 +43,24 @@ def classification_model_v5():
     model = tf.keras.models.Model(
         inputs=img_input, outputs= classification_fusion)
     return model
+
+def classification_model_v5_1():
+    img_input = Input(shape=(256, 256, 3))
+    resnet = tf.keras.applications.ResNet50V2(
+        include_top=False, weights='imagenet', input_tensor=img_input)
+    resnet_out = resnet.output
+    densenet = tf.keras.applications.DenseNet121(
+        include_top=False, weights='imagenet', input_tensor=img_input)
+    
+    for layer in densenet.layers:
+        layer._name = layer._name + str("_2")
+    densenet_out = densenet.output
+    resnet_branch_out = tf.keras.layers.Conv2D(1024,1,strides=1,padding='same')(resnet_out)
+    densenet_branch_out = tf.keras.layers.Conv2D(1024,1,strides=1,padding='same')(densenet_out)
+    concat = Concatenate()([resnet_branch_out, densenet_branch_out])
+    x_F = tf.keras.layers.GlobalAveragePooling2D()(concat)
+    classification_fusion = tf.keras.layers.Dense(
+        14, activation="sigmoid", name='fusion_global')(x_F)
+    model = tf.keras.models.Model(
+        inputs=img_input, outputs= classification_fusion)
+    return model

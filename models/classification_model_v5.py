@@ -3,6 +3,25 @@ import tensorflow.keras.backend as K
 from keras.layers import Dense, Flatten, Dropout, BatchNormalization, Input, Concatenate
 from tensorflow.keras.layers import GlobalAveragePooling2D, Reshape, Dense, Permute, multiply
 
+def cbam_block(input_tensor, reduction_ratio=8):
+    # Canal de atenção
+    channel_avg_pooling = tf.keras.layers.GlobalAveragePooling2D()(input_tensor)
+    channel_max_pooling = tf.keras.layers.GlobalMaxPooling2D()(input_tensor)
+    channel_concat = tf.keras.layers.Concatenate(axis=1)([channel_avg_pooling, channel_max_pooling])
+    channel_dense_1 = tf.keras.layers.Dense(units=tf.keras.backend.int_shape(input_tensor)[-1] // reduction_ratio,
+                                            activation='relu')(channel_concat)
+    channel_dense_2 = tf.keras.layers.Dense(units=tf.keras.backend.int_shape(input_tensor)[-1])(channel_dense_1)
+    channel_sigmoid = tf.keras.layers.Activation('sigmoid')(channel_dense_2)
+    channel_attention = tf.keras.layers.Multiply()([input_tensor, tf.expand_dims(channel_sigmoid, axis=1)])
+
+    # Atenção espacial
+    spatial_avg_pooling = tf.keras.layers.Lambda(lambda x: tf.keras.backend.mean(x, axis=-1, keepdims=True))(channel_attention)
+    spatial_max_pooling = tf.keras.layers.Lambda(lambda x: tf.keras.backend.max(x, axis=-1, keepdims=True))(channel_attention)
+    spatial_concat = tf.keras.layers.Concatenate(axis=-1)([spatial_avg_pooling, spatial_max_pooling])
+    spatial_conv = tf.keras.layers.Conv2D(filters=1, kernel_size=(7, 7), padding='same', activation='sigmoid')(spatial_concat)
+    spatial_attention = tf.keras.layers.Multiply()([channel_attention, spatial_conv])
+
+    return spatial_attention
 
 def se_block(input_feature, ratio=8):
 	"""Contains the implementation of Squeeze-and-Excitation(SE) block.
@@ -131,8 +150,8 @@ def classification_model_v5_3():
     resnet_branch_out = tf.keras.layers.Conv2D(1024,1,strides=1,padding='same')(resnet_out)
     densenet_branch_out = tf.keras.layers.Conv2D(1024,1,strides=1,padding='same')(densenet_out)
     concat = Concatenate()([resnet_branch_out, densenet_branch_out])
-    attention = tf.keras.layers.Attention(score_mode="dot")(concat)
-    x_F = tf.keras.layers.GlobalAveragePooling2D()(attention)
+    cbam_output = cbam_block(concat)
+    x_F = tf.keras.layers.GlobalAveragePooling2D()(cbam_output)
     classification_fusion = tf.keras.layers.Dense(
         14, activation="sigmoid", name='fusion_global')(x_F)
     model = tf.keras.models.Model(
